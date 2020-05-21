@@ -43,6 +43,14 @@ def network(activation):
     )
     return net_init, net_apply
 
+def elementwise(fun, **fun_kwargs):
+    """Layer that applies a scalar function elementwise on its inputs."""
+    init_fun = lambda rng, input_shape: (input_shape, ())
+    apply_fun = lambda params, inputs, **kwargs: fun(inputs, **fun_kwargs)
+    return init_fun, apply_fun
+
+def softplus_beta(beta, x):
+    return np.logaddexp(beta*x, 0) / beta
 
 
 class MAML:
@@ -94,17 +102,17 @@ class MAML:
             x1_b, y1_b, x2_b, y2_b = sample_tasks(num_task, K)
             opt_state, l = self.step(i, opt_state, x1_b, y1_b, x2_b, y2_b)
             np_batched_maml_loss.append(l)
-            if i % 1000 == 0:
-                print(i)
+            #if i % 1000 == 0:
+                #print("iter: " + str(i))
         self.net_params = get_params(opt_state)
 
         return self.net_params, self.net_apply
     
     def predict(self, inputs):
         return vmap(partial(self.net_apply, self.net_params))(inputs)
-
     
-if __name__ == "__main__":
+    
+def main1():
     # batch the inference across K=100
     xrange_inputs = np.linspace(-5,5,100).reshape((100, 1))
     targets = np.sin(xrange_inputs)
@@ -113,9 +121,9 @@ if __name__ == "__main__":
     maml1 = MAML(Relu)
     net_params1, net_apply1 = maml1.train()
     predictions1 = maml1.predict(xrange_inputs)
-
     # Softplus
-    maml2 = MAML(Softplus)
+    softplus1 = elementwise(partial(softplus_beta, 1))   
+    maml2 = MAML(softplus1)
     net_params2, net_apply2 = maml2.train()
     predictions2 = maml2.predict(xrange_inputs)
 
@@ -131,6 +139,7 @@ if __name__ == "__main__":
     for i in range(1,k):
         net_params1 = maml1.inner_update(net_params1, x1, y1)
     predictions = vmap(partial(net_apply1, net_params1))(xrange_inputs)
+    loss = maml1.loss(net_params1, xrange_inputs, targets)
     plt.plot(xrange_inputs, predictions, label='{}-shot predictions Relu'.format(k))
     plt.legend()
 
@@ -141,3 +150,40 @@ if __name__ == "__main__":
     plt.legend()
     
     plt.savefig('maml_plot.png')
+    
+
+    
+if __name__ == "__main__":
+        
+    # batch the inference across K=100
+    xrange_inputs = np.linspace(-5,5,100).reshape((100, 1))
+    targets = np.sin(xrange_inputs)
+    
+    activations = {"Relu": Relu}
+    # get different softplus activation function by different beta
+    betas = [1, 10, 100, 1000, 10000]
+    for beta in betas:
+        softplus = elementwise(partial(softplus_beta, beta)) 
+        activations["Softplus " + str(beta)] =  softplus
+       
+    for activation in activations:            
+        maml = MAML(activations[activation])
+        net_params, net_apply = maml.train()
+        predictions = maml.predict(xrange_inputs)
+
+        x1 = onp.random.uniform(low=-5., high=5., size=(10,1))
+        y1 = 1. * onp.sin(x1 + 0.)
+
+        k = 5
+        for i in range(1,k):
+            net_params = maml.inner_update(net_params, x1, y1)
+        predictions = vmap(partial(net_apply, net_params))(xrange_inputs)
+        loss = maml.loss(net_params, xrange_inputs, targets)
+        print("{} loss: {}".format(activation, loss))
+        plt.plot(xrange_inputs, predictions, label='{}-shot predictions {}'.format(k, activation))
+        plt.legend()
+    
+            
+    plt.plot(xrange_inputs, targets, label='target')
+    plt.legend()
+    plt.savefig('maml_plot2.png')
